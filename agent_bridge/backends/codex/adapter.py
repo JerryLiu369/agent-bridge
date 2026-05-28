@@ -44,7 +44,7 @@ CODEX_CAPABILITIES = Capabilities(
 _PROVIDER_ID = "agent_bridge_provider"
 _PROVIDER_DISPLAY_NAME = "agent-bridge custom"
 
-_VALID_THINKING = frozenset({None, "off", "minimal", "low", "medium", "high"})
+_VALID_THINKING = frozenset({None, "off", "low", "medium", "high", "xhigh"})
 _VALID_API_FORMAT = frozenset({"response"})
 
 
@@ -77,8 +77,7 @@ def _validate_model(model: CodexModel) -> None:
     if model.thinking not in _VALID_THINKING:
         raise ValueError(
             f"CodexModel.thinking={model.thinking!r} not supported. "
-            f"Codex accepts: None / 'off' / 'minimal' / 'low' / 'medium' / 'high'. "
-            f"('xhigh' exists on Pi but not on Codex.)"
+            f"Codex accepts: None / 'off' / 'minimal' / 'low' / 'medium' / 'high' / 'xhigh' . "
         )
 
 

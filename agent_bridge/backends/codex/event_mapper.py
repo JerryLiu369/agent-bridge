@@ -168,7 +168,10 @@ def map_codex_notification(msg: "ServerMessage") -> Iterable[AgentEvent]:
             message=params.get("message", ""),
         )]
     if method == "error":
-        return [ErrorEvent(message=params.get("message", "unknown error"))]
+        return [ErrorEvent(
+            message=params.get("message") or "unknown error",
+            raw=dict(params) if params else None,
+        )]
 
     return []
 

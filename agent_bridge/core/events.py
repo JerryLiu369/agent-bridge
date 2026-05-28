@@ -132,6 +132,7 @@ class WarningEvent:
 @dataclass
 class ErrorEvent:
     message: str
+    raw: dict | None = None
     type: str = "error"
 
 
