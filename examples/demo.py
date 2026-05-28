@@ -1,98 +1,149 @@
 #!/usr/bin/env python3
 """
-pi-bridge demo: session continuity + custom tool calling.
+demo.py — minimal "what does it take to swap backends?" sample.
+
+For full feature walkthroughs see `demo_pi.py` / `demo_codex.py`. This one
+boils the swap down to its essence:
+
+  * Everything in the SWITCH block changes when you swap backends.
+  * Everything below /SWITCH is backend-agnostic.
+
+Reads creds from `.env` at the repo root (one level up from this file).
+
+Run:  python3 examples/demo.py
 """
+
+from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-from pi_bridge import PiSession, Provider, Model, CustomTool
-
-API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
-if not API_KEY:
-    print("ERROR: DEEPSEEK_API_KEY not set", file=sys.stderr)
-    sys.exit(1)
-
-# ---------------------------------------------------------------------------
-# Custom tool: returns a secret number hidden from the agent
-# ---------------------------------------------------------------------------
-
-SECRET = 37
-
-def get_secret_number() -> str:
-    print(f"  [tool] get_secret_number() → {SECRET}")
-    return str(SECRET)
-
-
-# ---------------------------------------------------------------------------
-# Session setup
-# ---------------------------------------------------------------------------
-
-print("Initializing Pi session...")
-session = PiSession(
-    provider=Provider(
-        base_url="https://api.deepseek.com/v1",
-        api_key=API_KEY,
-    ),
-    model=Model(
-        name="deepseek-chat",
-        api_format="completion",
-    ),
-    tools=[],
-    custom_tools=[
-        CustomTool(
-            name="get_secret_number",
-            description="Returns a secret number. Call this tool whenever you need the secret number.",
-            parameters={"type": "object", "properties": {}},
-            fn=get_secret_number,
-        )
-    ],
+from agent_bridge import (
+    AgentSession,
+    AgentEndEvent,
+    CodexAuth,
+    CodexConfig,
+    CodexModel,
+    CodexProvider,
+    CustomTool,
+    PiConfig,
+    PiModel,
+    PiProvider,
+    TextDeltaEvent,
+    ToolCallEvent,
+    ToolResultEvent,
 )
 
 
-def print_events(events):
-    for event in events:
-        if event.type == "text_delta":
-            print(event.delta, end="", flush=True)
-        elif event.type == "tool_call":
-            print(f"  [agent calling tool: {event.tool_name}]")
-        elif event.type == "agent_end":
-            print(f"\n[stop_reason={event.stop_reason}]")
-        elif event.type == "error":
-            print(f"\n[ERROR: {event.message}]", file=sys.stderr)
+ENV_PATH = REPO_ROOT / ".env"
 
 
-# ---------------------------------------------------------------------------
-# Round 1: agent must call the tool to get the number
-# ---------------------------------------------------------------------------
+def load_env(path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    with open(path) as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
 
-print("\n=== 第一轮：工具调用 ===")
-print_events(session.send("请调用 get_secret_number 工具获取秘密数字，然后告诉我它是多少。"))
 
-# ---------------------------------------------------------------------------
-# Round 2: agent already knows the number from the previous turn
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Custom tool — defined ONCE, plugs into either backend without changes.
+# ===========================================================================
 
-print("\n=== 第二轮：会话连续性（无需再次调用工具）===")
-print_events(session.send("把刚才那个秘密数字乘以2，只回答结果。"))
+def get_secret_number() -> str:
+    return "4242"
 
-# ---------------------------------------------------------------------------
-# Message history
-# ---------------------------------------------------------------------------
 
-print("\n=== 消息历史 ===")
-for msg in session.messages:
-    role = msg.get("role", "?")
-    if role == "assistant":
-        texts = [c["text"] for c in msg.get("content", []) if c.get("type") == "text"]
-        if texts:
-            print(f"assistant: {''.join(texts).strip()}")
-    elif role == "user":
-        print(f"user: {str(msg.get('content', '')).strip()}")
-    elif role == "tool_result":
-        print(f"tool_result({msg.get('tool_name')}): {msg.get('content', '').strip()}")
+SECRET_TOOL = CustomTool(
+    name="get_secret_number",
+    description="Returns a secret number that the agent cannot guess.",
+    parameters={"type": "object", "properties": {}},
+    fn=get_secret_number,
+)
 
-session.close()
-print("\nDemo complete!")
+
+# ===========================================================================
+# ▼▼▼  SWITCH BLOCK  ▼▼▼  (this is everything that changes between backends)
+# ===========================================================================
+
+BACKEND = "pi"   # ← change to "codex" to swap
+
+ENV = load_env(ENV_PATH)
+CWD = os.path.abspath(".")
+
+if BACKEND == "pi":
+    config = PiConfig(
+        provider=PiProvider(
+            base_url=ENV["TEST_PROVIDER_BASE_URL"],
+            api_key=ENV["TEST_PROVIDER_API_KEY"],
+        ),
+        model=PiModel(
+            name=ENV["TEST_MODEL_NAME"],
+            api_format=ENV.get("TEST_MODEL_API_FORMAT", "completion"),
+        ),
+        cwd=CWD,
+        safety_mode="read_only",
+        custom_tools=[SECRET_TOOL],
+    )
+
+elif BACKEND == "codex":
+    config = CodexConfig(
+        provider=CodexProvider(
+            base_url=ENV["TEST_PROVIDER_BASE_URL"],
+            api_key=ENV["TEST_PROVIDER_API_KEY"],
+        ),
+        # Codex 0.133+ only speaks OpenAI Responses; the upstream gateway
+        # routes deepseek-v4-pro to chat completions, so we override to a
+        # Responses-compatible model.
+        model=CodexModel(name=os.environ.get("CODEX_MODEL", "gpt-5.5")),
+        auth=CodexAuth(),  # ignored when provider is set
+        cwd=CWD,
+        safety_mode="read_only",
+        custom_tools=[SECRET_TOOL],
+    )
+
+else:
+    raise SystemExit(f"unknown BACKEND={BACKEND!r} (use 'pi' or 'codex')")
+
+# ===========================================================================
+# ▲▲▲  /SWITCH BLOCK  ▲▲▲  (everything below is backend-agnostic)
+# ===========================================================================
+
+
+def print_event(event) -> None:
+    if isinstance(event, TextDeltaEvent):
+        sys.stdout.write(event.delta)
+        sys.stdout.flush()
+    elif isinstance(event, ToolCallEvent):
+        print(f"\n  [tool_call] {event.tool_name}({event.arguments})")
+    elif isinstance(event, ToolResultEvent):
+        print(f"\n  [tool_result] {event.tool_name} → {event.content!r}")
+    elif isinstance(event, AgentEndEvent):
+        print(f"\n  [agent_end stop_reason={event.stop_reason}]")
+
+
+print(f"--- backend = {BACKEND} ---")
+
+with AgentSession(backend=BACKEND, config=config) as session:
+    print("\n=== Round 1 ===")
+    for ev in session.send_stream(
+        "Call get_secret_number and tell me the value in one sentence."
+    ):
+        print_event(ev)
+
+    print("\n=== Round 2 (continuity) ===")
+    for ev in session.send_stream(
+        "Multiply that number by 7. Reply with just the result."
+    ):
+        print_event(ev)
+
+print(f"\nDone. Switch BACKEND='{BACKEND}' → "
+      f"'{'codex' if BACKEND == 'pi' else 'pi'}' and rerun to see the other side.")

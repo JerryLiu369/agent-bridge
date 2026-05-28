@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pi-bridge"
-version = "0.1.0"
-description = "Python wrapper for the Pi Agent SDK"
+name = "agent-bridge"
+version = "0.2.0"
+description = "Multi-backend coding-agent session: Pi and Codex behind one Python API"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -14,7 +14,7 @@ dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pi_bridge*"]
+include = ["agent_bridge*"]
 
 [tool.setuptools.package-data]
-pi_bridge = []
+"agent_bridge.backends.pi" = ["server.mjs", "package.json"]

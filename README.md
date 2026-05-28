@@ -1,72 +1,68 @@
-# pi-bridge
+# agent-bridge
 
-Python wrapper for the [Pi Agent SDK](https://github.com/earendil-works/pi). Pi is an autonomous coding agent that reads, edits, and runs code in a working directory using tools like `bash`, `read`, and `edit`. pi-bridge lets you drive it from Python via a local Node.js bridge process.
+Python entrypoint for coding agents. One API, multiple backends:
 
-## Dependencies
+- **Pi** — the [Pi Agent SDK](https://github.com/earendil-works/pi) (Node.js bridge).
+- **Codex** — OpenAI's `codex app-server` (JSON-RPC over stdio).
 
-- **Node.js** ≥ 18
-- **Pi Agent** installed globally:
-  ```bash
-  npm install -g @earendil-works/pi-coding-agent
-  ```
-- **Python** ≥ 3.11
+```python
+from agent_bridge import AgentSession, PiConfig, PiProvider, PiModel
 
-## Installation
+session = AgentSession(
+    backend="pi",
+    config=PiConfig(
+        provider=PiProvider(base_url="https://api.deepseek.com/v1", api_key="sk-..."),
+        model=PiModel(name="deepseek-chat", api_format="completion"),
+        cwd="/your/project",
+    ),
+)
+
+for event in session.send_stream("列出当前目录的文件"):
+    if event.type == "text_delta":
+        print(event.delta, end="", flush=True)
+
+session.close()
+```
+
+The same call shape works against Codex; only the config swaps. The Pi
+and Codex configs share field names where they can — `provider`, `model`,
+`safety_mode`, `custom_tools`, etc. — so backend swaps are mechanical.
+Custom Python tools written for one backend run unchanged on the other.
+
+## Install
 
 ```bash
 git clone <this-repo>
-cd pi-bridge
+cd agent-bridge
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-## Usage
+### Backend prerequisites
+
+| Backend | Requirement |
+|---------|-------------|
+| `pi`    | Node.js ≥ 18, `npm install -g @earendil-works/pi-coding-agent` |
+| `codex` | `codex` CLI ≥ 0.124.0 on `PATH`, plus `codex login` (or `OPENAI_API_KEY` / `CODEX_API_KEY`) |
+
+## Backends
+
+### Pi
 
 ```python
-from pi_bridge import PiSession, Provider, Model
-
-session = PiSession(
-    provider=Provider(
-        base_url="https://api.deepseek.com/v1",
-        api_key="sk-...",
-    ),
-    model=Model(
-        name="deepseek-chat",
-        api_format="completion",  # "completion" | "response" | "anthropic"
-    ),
-    cwd="/your/project",          # working directory for the agent
-)
-
-# Send a message and get all events at once
-events = session.send("列出当前目录的文件")
-for e in events:
-    if e.type == "text_delta":
-        print(e.delta, end="", flush=True)
-
-# Or stream events one by one
-for e in session.send_stream("解释一下 main.py"):
-    if e.type == "text_delta":
-        print(e.delta, end="", flush=True)
-
-session.close()
-```
-
-Multiple `send()` calls on the same session share context — the agent remembers the full conversation history automatically.
-
-## Custom tools
-
-```python
-from pi_bridge import PiSession, Provider, Model, CustomTool
+from agent_bridge import AgentSession, PiConfig, PiProvider, PiModel, CustomTool
 
 def web_search(query: str) -> str:
-    return "..."  # your implementation
+    return "..."
 
-session = PiSession(
-    provider=Provider(...),
-    model=Model(...),
-    custom_tools=[
-        CustomTool(
+session = AgentSession(
+    backend="pi",
+    config=PiConfig(
+        provider=PiProvider(base_url="https://api.anthropic.com/v1", api_key="sk-..."),
+        model=PiModel(name="claude-sonnet-4-5", api_format="anthropic", thinking="medium"),
+        cwd=".",
+        custom_tools=[CustomTool(
             name="web_search",
             description="Search the web",
             parameters={
@@ -75,140 +71,174 @@ session = PiSession(
                 "required": ["query"],
             },
             fn=web_search,
-        )
-    ],
+        )],
+    ),
 )
 ```
 
-## API reference
-
-### Input types
-
-These are the types you construct and pass into `PiSession`.
-
-#### `Provider`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `base_url` | `str` | API base URL, e.g. `"https://api.anthropic.com/v1"` |
-| `api_key` | `str` | API key (default: `""`) |
-
-Known hosts are mapped to their Pi provider name automatically. Any other hostname is used as-is.
-
-#### `Model`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `str` | Model ID, e.g. `"claude-sonnet-4-5"`, `"deepseek-chat"` |
-| `api_format` | `str` | API call format (see table below) |
-| `thinking` | `str \| None` | Thinking level: `None` / `"off"` / `"minimal"` / `"low"` / `"medium"` / `"high"` / `"xhigh"` |
-
-| `api_format` | For |
-|--------------|-----|
-| `"anthropic"` | Anthropic Claude |
-| `"completion"` | OpenAI Chat Completions, DeepSeek, Groq, … |
-| `"response"` | OpenAI Responses API |
-
-#### `CustomTool`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `str` | Tool name (letters, digits, underscores only) |
-| `description` | `str` | Shown to the model to decide when to call the tool |
-| `parameters` | `dict` | JSON Schema object describing the tool's arguments |
-| `fn` | `Callable` | Python function to call; receives keyword args matching the schema |
-
-`fn` should return a string. Raised exceptions are caught and sent back to the agent as an error result.
-
----
-
-### `PiSession`
+### Codex
 
 ```python
-PiSession(
-    provider: Provider,
-    model: Model,
-    cwd: str = ".",
-    system_prompt: str = "",
-    tools: list[str] | None = None,
-    custom_tools: list[CustomTool] | None = None,
-    persist: bool = False,
+from agent_bridge import (
+    AgentSession, CodexConfig, CodexAuth, CodexProvider, CodexModel,
 )
+
+session = AgentSession(
+    backend="codex",
+    config=CodexConfig(
+        cwd="/your/project",
+        provider=CodexProvider(
+            base_url="https://your-gateway/v1",   # OpenAI-Responses-compatible
+            api_key="sk-...",
+        ),
+        model=CodexModel(name="gpt-5.5", thinking="medium"),
+        safety_mode="read_only",
+    ),
+)
+
+for event in session.send_stream("Refactor the auth module"):
+    if event.type == "text_delta":
+        print(event.delta, end="", flush=True)
+
+session.close()
 ```
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `provider` | — | API endpoint and credentials |
-| `model` | — | Model to use |
-| `cwd` | `"."` | Working directory for the agent |
-| `system_prompt` | `""` | Override the default system prompt |
-| `tools` | `None` | Built-in tool allowlist; `None` = Pi defaults (`read`, `bash`, `edit`, `write`), `[]` = none, explicit list = only those tools. All available names: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls` |
-| `custom_tools` | `None` | Python-side tools exposed to the agent |
-| `persist` | `False` | Persist session history to disk under `cwd/.pi/` |
+If you don't pass a `provider`, the adapter falls back to your local
+`codex login` state (or `CodexAuth(api_key=...)` for direct API-key auth
+to OpenAI's built-in provider).
 
-**Methods**
+Codex turn options (`model`, `effort`, `cwd`, `summary`, `output_schema`,
+`service_tier`) can also be passed as keyword args to `send` / `send_stream`.
+The Pi adapter rejects all turn options.
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `send(msg)` | `list[ResponseEvent]` | Send a message, block until the agent finishes, return all events |
-| `send_stream(msg)` | `Iterator[ResponseEvent]` | Same but yield events as they arrive |
-| `set_model(provider, model)` | `None` | Hot-swap the model mid-session. Conversation history is preserved; new provider credentials take effect immediately. |
-| `set_thinking_level(level)` | `None` | Change thinking intensity without switching models |
-| `compact(instructions="")` | `None` | Manually trigger context compaction. `instructions` is an optional string telling the model what to focus on when summarizing. |
-| `abort()` | `None` | Abort the current operation |
-| `close()` | `None` | Shut down the bridge process |
+#### Codex limitations to know about
 
-**Properties**
+- **Only OpenAI Responses API is supported** (`api_format="response"`).
+  codex 0.133+ removed Chat Completions support; passing `"completion"` or
+  `"anthropic"` raises at startup. If your endpoint only speaks Chat
+  Completions, use the Pi backend instead.
+- `thinking="xhigh"` doesn't exist on Codex (use `"high"` instead). All
+  other `thinking` values map cleanly to Codex's `reasoning_effort`.
+- Custom provider injection works by passing `-c model_providers.<id>.*`
+  flags to `codex app-server` at startup. The provider is process-level —
+  every thread in the same `AgentSession` shares it. To swap providers,
+  create a new `AgentSession`.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `messages` | `list[dict]` | Full conversation history. Each dict has a `role` field (`"user"`, `"assistant"`, `"tool_result"`) plus role-specific fields (see below). |
-| `state` | `dict` | Current session state: model, message count, streaming flag, etc. |
+## Safety modes
 
-`messages` entry shapes:
+`safety_mode` lives on `AgentSessionConfig` (the base both `PiConfig` and
+`CodexConfig` inherit from), and is the single knob for "what is the agent
+allowed to do". Each backend translates it into its native primitives:
+
+| `safety_mode` | Pi (built-in tools) | Codex (`thread/start`) |
+|---|---|---|
+| `allow_all` (default) | full set: `read`, `bash`, `edit`, `write` | `sandbox=danger-full-access`, `approvalPolicy=never` |
+| `read_only`           | `read` only | `sandbox=read-only`, `approvalPolicy=never` |
+
+Both modes use Codex's `approvalPolicy=never` so the agent never blocks
+waiting for client confirmation; the sandbox enforces the actual policy.
+There's an `adapter.set_approval_handler(...)` escape hatch on the Codex
+adapter for power users who need a custom policy.
+
+Custom tools are always available regardless of mode.
+
+## Custom tools
+
+`CustomTool` is shared between backends. Define the tool once, plug the
+same instance into either config:
 
 ```python
-{"role": "user", "content": "your message text"}
-{"role": "assistant", "content": [{"type": "text", "text": "..."}], "stop_reason": "tool_use"}
-{"role": "tool_result", "tool_call_id": "...", "tool_name": "...", "content": "...", "is_error": False}
+from agent_bridge import CustomTool
+
+def lookup_ticket(id: str) -> str:
+    return f"ticket {id}: in progress"
+
+ticket_tool = CustomTool(
+    name="lookup_ticket",
+    description="Fetch a ticket by id",
+    parameters={
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+        "required": ["id"],
+    },
+    fn=lookup_ticket,
+)
+
+# Same tool object — works on both backends.
+PiConfig(..., custom_tools=[ticket_tool])
+CodexConfig(..., custom_tools=[ticket_tool])
 ```
 
----
+Under the hood, the Codex adapter:
 
-### Response events
+- opts into `capabilities.experimentalApi=true` during `initialize` (required
+  for dynamic tools)
+- registers each `CustomTool` as a `dynamicTools` entry on `thread/start`
+  (`name` / `description` / `inputSchema` come straight from the dataclass)
+- routes the resulting `item/tool/call` ServerRequest to your `fn`, returning
+  the result as `{contentItems: [{type: "text", text: ...}], success: bool}`
 
-`send()` and `send_stream()` return/yield `ResponseEvent`, which is a union of the following:
+Exceptions inside `fn` come back as `success=false` with the exception
+message, so the model keeps reasoning instead of aborting the turn — same
+behavior as the Pi backend.
 
-| Type | Fields | Description |
-|------|--------|-------------|
-| `TextDeltaEvent` | `delta: str` | Incremental text chunk from the model |
-| `ThinkingDeltaEvent` | `delta: str` | Incremental thinking/reasoning chunk |
-| `ToolCallEvent` | `tool_call_id`, `tool_name`, `arguments` | Agent is invoking a tool |
-| `ToolResultEvent` | `tool_call_id`, `tool_name`, `content`, `is_error` | Tool execution completed |
-| `TurnEndEvent` | — | One LLM inference turn finished (may be multiple per `send()`) |
-| `AgentEndEvent` | `stop_reason: str` | Agent finished the full response; last event in every `send()` |
-| `ErrorEvent` | `message: str` | Something went wrong (API error, timeout, etc.) |
+## Capabilities
 
-All events have a `type` field matching the class name in snake_case (e.g. `"text_delta"`, `"agent_end"`).
-
----
-
-### Error handling
-
-`ErrorEvent` is yielded for recoverable errors (e.g. API errors). The session remains usable afterwards.
-
-`BridgeError` is raised as a Python exception when the bridge process crashes or the protocol breaks down. Once raised, the session is dead — create a new `PiSession`.
+The two backends advertise different feature sets:
 
 ```python
-from pi_bridge import BridgeError
+session.capabilities.builtin_command_exec  # codex: True, pi: False
+session.capabilities.builtin_file_ops      # codex: True, pi: False
+session.capabilities.turn_diff             # codex: True, pi: False
+```
+
+Don't hard-code on `session.backend == "..."`; check capabilities instead.
+
+## Events
+
+`send` / `send_stream` yield instances of `AgentEvent` (a union). Pi emits a
+subset; Codex exercises the full set. Each event has a `type` field carrying
+the snake-case name.
+
+| Event | Pi | Codex |
+|---|---|---|
+| `TextDeltaEvent` | ✓ | ✓ |
+| `ThinkingDeltaEvent` | ✓ |   |
+| `ReasoningSummaryDeltaEvent` |   | ✓ |
+| `ToolCallEvent`, `ToolResultEvent` | ✓ | ✓ |
+| `CommandStartEvent`, `CommandEndEvent` |   | ✓ |
+| `FileChangeEvent`, `TurnDiffEvent` |   | ✓ |
+| `TokenUsageEvent` | ✓ | ✓ |
+| `TurnStartEvent`, `TurnEndEvent` | ✓ | ✓ |
+| `AgentEndEvent` | ✓ | ✓ |
+| `WarningEvent` |   | ✓ |
+| `ErrorEvent` | ✓ | ✓ |
+
+## Errors
+
+```python
+from agent_bridge import BridgeError, RpcError
 
 try:
-    events = session.send("...")
-    for e in events:
-        if e.type == "error":
-            print("Agent error:", e.message)  # recoverable
-        elif e.type == "text_delta":
-            print(e.delta, end="")
-except BridgeError as e:
-    print("Bridge crashed:", e)  # session is dead
+    for event in session.send_stream("..."):
+        if event.type == "error":
+            print("Recoverable:", event.message)
+except BridgeError as exc:
+    print("Subprocess died:", exc)  # session is dead
+except RpcError as exc:
+    print("Codex JSON-RPC error:", exc.code, exc.message)
 ```
+
+`ErrorEvent` is recoverable — the session keeps running. `BridgeError`
+means the subprocess crashed; create a new `AgentSession`. `RpcError` is
+raised by the Codex backend when the app-server returns a JSON-RPC error.
+
+## Architecture
+
+```
+AgentSession
+ ├─ create_adapter("pi", PiConfig)    → PiAdapter    → JsonlSubprocessTransport → backends/pi/server.mjs
+ └─ create_adapter("codex", CodexConfig) → CodexAdapter → JsonlSubprocessTransport + CodexRpcClient → codex app-server
+```
+
+See `agent_bridge_multi_backend_architecture_clean.md` for the full design.

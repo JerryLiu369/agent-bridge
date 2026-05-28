@@ -404,9 +404,24 @@ session.subscribe((event) => {
             break;
         }
 
-        case 'turn_end':
+        case 'turn_end': {
+            // turn_end carries the AssistantMessage for this LLM inference.
+            // Each turn_end = one inference, so emit usage here (skipping
+            // failure messages where usage is unreliable).
+            const msg = event.message;
+            const stopReason = msg?.stopReason;
+            if (msg?.role === 'assistant' && msg?.usage
+                    && stopReason !== 'error' && stopReason !== 'aborted') {
+                emit({
+                    type: 'token_usage',
+                    input_tokens: msg.usage.input ?? 0,
+                    output_tokens: msg.usage.output ?? 0,
+                    cached_input_tokens: msg.usage.cacheRead ?? 0,
+                });
+            }
             emit({ type: 'turn_end' });
             break;
+        }
 
         case 'agent_end': {
             const msgs = event.messages ?? session.messages;
@@ -418,7 +433,6 @@ session.subscribe((event) => {
 
         // Silently consume internal events
         case 'agent_start':
-        case 'turn_start':
         case 'message_start':
         case 'message_end':
         case 'compaction_start':
@@ -429,6 +443,10 @@ session.subscribe((event) => {
         case 'session_info_changed':
         case 'thinking_level_changed':
         case 'tool_execution_update':
+            break;
+
+        case 'turn_start':
+            emit({ type: 'turn_start' });
             break;
 
         default:
@@ -562,12 +580,6 @@ for await (const line of lines) {
             session.setThinkingLevel(level);
             break;
         }
-
-        case 'compact':
-            session.compact(cmd.instructions ?? '').catch((e) => {
-                emit({ type: 'error', message: `compact error: ${e.message}` });
-            });
-            break;
 
         case 'abort':
             session.abort().catch(() => {});
