@@ -117,8 +117,10 @@ The Pi adapter rejects all turn options.
   codex 0.133+ removed Chat Completions support; passing `"completion"` or
   `"anthropic"` raises at startup. If your endpoint only speaks Chat
   Completions, use the Pi backend instead.
-- `thinking="xhigh"` doesn't exist on Codex (use `"high"` instead). All
-  other `thinking` values map cleanly to Codex's `reasoning_effort`.
+- `thinking` on Codex accepts `low` / `medium` / `high` / `xhigh`
+  (default `medium`). Codex does **not** accept `minimal` — the Pi
+  backend supports it, Codex does not. `off` / `None` is also accepted
+  on both backends and turns reasoning off.
 - Custom provider injection works by passing `-c model_providers.<id>.*`
   flags to `codex app-server` at startup. The provider is process-level —
   every thread in the same `AgentSession` shares it. To swap providers,
