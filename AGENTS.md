@@ -1,4 +1,4 @@
-# CLAUDE.md — agent-bridge orientation
+# AGENTS.md — agent-bridge orientation
 
 This is the file Claude Code (or any agent) reads first when entering this
 repo. It exists to make a new agent productive in 5 minutes, not 50.
