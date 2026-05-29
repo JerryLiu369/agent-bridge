@@ -147,7 +147,13 @@ function buildModel(providerName, modelConfig, baseUrl) {
         // Override api and baseUrl from user config
         model = { ...model, api: apiField, baseUrl: normalizedBaseUrl, provider: providerName };
     } else {
-        // Construct custom model object
+        // Construct custom model object.
+        //
+        // thinkingLevelMap is needed so pi-ai's clampThinkingLevel() doesn't
+        // silently drop "xhigh" — without an explicit map entry, that helper
+        // treats xhigh as unsupported and downgrades to "high". We pass every
+        // level through unchanged so the upstream provider sees the same
+        // string the caller asked for.
         model = {
             id: modelConfig.name,
             name: modelConfig.name,
@@ -155,6 +161,14 @@ function buildModel(providerName, modelConfig, baseUrl) {
             provider: providerName,
             baseUrl: normalizedBaseUrl,
             reasoning: ['high', 'xhigh', 'medium', 'low', 'minimal'].includes(modelConfig.thinking),
+            thinkingLevelMap: {
+                off: null,
+                minimal: 'minimal',
+                low: 'low',
+                medium: 'medium',
+                high: 'high',
+                xhigh: 'xhigh',
+            },
             input: ['text'],
             cost: { input: 0, output: 0 },
             contextWindow: 200000,

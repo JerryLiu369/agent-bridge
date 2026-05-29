@@ -77,7 +77,7 @@ def _validate_model(model: CodexModel) -> None:
     if model.thinking not in _VALID_THINKING:
         raise ValueError(
             f"CodexModel.thinking={model.thinking!r} not supported. "
-            f"Codex accepts: None / 'off' / 'minimal' / 'low' / 'medium' / 'high' / 'xhigh' . "
+            f"Codex accepts: None / 'off' / 'low' / 'medium' / 'high' / 'xhigh'."
         )
 
 
